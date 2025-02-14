@@ -33,7 +33,7 @@ time ysqlsh -h $HOSTNAME -X <<EOF
 
   -- based on nr seconds since last snapshot: decide to go or nogo
 
-  with l as ( select max (log_dt) as last_snap from ybx_snap_log  )
+  with l as ( select coalesce ( max (log_dt), ( now() - interval '3601 sec' ) )  as last_snap from ybx_snap_log  )
   select 
        trunc ( EXTRACT (EPOCH FROM (now () - l.last_snap) ) )                as ela_sec
   ,  ( trunc ( EXTRACT (EPOCH FROM (now () - l.last_snap) ) ) < 180 )::text  as nogo
@@ -60,8 +60,8 @@ time ysqlsh -h $HOSTNAME -X <<EOF
   \echo on
 
   -- generate snapshot
-  insert into ybx_snap_log ( host ) values ( ybx_get_host() )
-  returning id as snap_id , ''''||host||'''' as hostnm
+  insert into ybx_snap_log ( log_host ) values ( ybx_get_host() )
+  returning id as snap_id , ''''||log_host||'''' as hostnm
   \gset
 
   -- verify

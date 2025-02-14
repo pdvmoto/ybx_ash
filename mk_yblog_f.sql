@@ -1,6 +1,5 @@
 
 
-
 -- now the functions, start with some simple ones,
 -- then do the ASH and qury as the most complicated oneso
 -- to start with ASH, we need to disable constrints, 
@@ -43,7 +42,7 @@ DECLARE
   cmmnt_txt     text              := 'comment ' ;
 BEGIN
 
-  RAISE NOTICE 'ybx_get_datb() : starting..' ;
+  -- RAISE NOTICE 'ybx_get_datb() : starting..' ;
 
   insert /* get_datb_1_mst */ into ybx_datb_mst (  datid,   datname ) 
   select                    d.datid, d.datname 
@@ -55,7 +54,7 @@ BEGIN
   GET DIAGNOSTICS n_datb_new := ROW_COUNT;
   retval := retval + n_datb_new ;
 
-  RAISE NOTICE 'ybx_get_datb() nr new : % ', n_datb_new ;
+  -- RAISE NOTICE 'ybx_get_datb() nr new : % ', n_datb_new ;
 
   -- the log-data.. 
   insert /* get_datb_2_log */ into ybx_datb_log ( 
@@ -120,12 +119,12 @@ BEGIN
   GET DIAGNOSTICS n_datb_log := ROW_COUNT;
   retval := retval + n_datb_log ;
 
-  RAISE NOTICE 'ybx_get_datb() nr logged : % ', n_datb_log ;
+  -- RAISE NOTICE 'ybx_get_datb() nr logged : % ', n_datb_log ;
 
 
   duration_ms := EXTRACT ( MILLISECONDS from ( clock_timestamp() - start_dt ) ) ;
 
-  RAISE NOTICE 'ybx_get_datb() elapsed : % ms'     , duration_ms ;
+  -- RAISE NOTICE 'ybx_get_datb() elapsed : % ms'     , duration_ms ;
 
   cmmnt_txt :=  'get_datb: from new: ' || n_datb_new
                     || ', from_log: '  || n_datb_log || '.';
@@ -178,12 +177,12 @@ DECLARE
   cmmnt_txt      text              := 'comment ' ;
 BEGIN
 
-  RAISE NOTICE 'ybx_get_qury() : starting..' ;
+  -- RAISE NOTICE 'ybx_get_qury() : starting..' ;
 
   -- init didnt work...
   this_tsrv := ybx_get_tsrv( this_host ) ; 
 
-  -- note tsrv + host can use dflts
+  -- note tsrv + host can use dflts, but defaults (function calls) seem slower
   insert /* qury_1 from ash */ 
   into ybx_qury_mst ( queryid, log_tsrv, log_host, log_dt )
     select a.query_id, this_tsrv, this_host, min ( a.sample_time ) 
@@ -191,24 +190,24 @@ BEGIN
     where a.sample_time > ( start_dt - make_interval ( secs=>900 ) )
       and not exists ( select 'x' from ybx_qury_mst m where m.queryid = a.query_id ) 
       and a.query_id is not null
-    group by a.query_id, this_host ; 
+    group by a.query_id, this_tsrv, this_host ; 
 
   GET DIAGNOSTICS n_qrys_ash := ROW_COUNT;
   retval := retval + n_qrys_ash ;
 
-  RAISE NOTICE 'ybx_get_qury() from ash : % '     , n_qrys_ash ;
+  -- RAISE NOTICE 'ybx_get_qury() from ash : % '     , n_qrys_ash ;
 
   insert /* qury_2 from act */ into ybx_qury_mst ( queryid, log_tsrv, log_host, log_dt, query )
     select a.query_id, this_tsrv, this_host, min ( coalesce ( a.query_start, clock_timestamp() ) ), min ( a.query)
       from pg_stat_activity a
      where not exists ( select 'x' from ybx_qury_mst m where m.queryid = a.query_id ) 
        and a.query_id is not null
-    group by a.query_id, this_host, query ;  -- note the min-query : bcse multiple texts can exist?
+    group by a.query_id, this_tsrv, this_host ;  -- note the min-query : bcse multiple texts can exist?
 
   GET DIAGNOSTICS n_qrys_act := ROW_COUNT;
   retval := retval + n_qrys_act ;
 
-  RAISE NOTICE 'ybx_get_qury() from act : % '     , n_qrys_act ;
+  -- RAISE NOTICE 'ybx_get_qury() from act : % '     , n_qrys_act ;
 
   -- consider a merge with 4.. 
   -- use dflt for log_dt
@@ -221,7 +220,7 @@ BEGIN
   GET DIAGNOSTICS n_qrys_stmt := ROW_COUNT;
   retval := retval + n_qrys_stmt ;
 
-  RAISE NOTICE 'ybx_get_qury() from stmt : % '     , n_qrys_stmt ;
+  -- RAISE NOTICE 'ybx_get_qury() from stmt : % '     , n_qrys_stmt ;
 
   -- consider a merge.. 
   update /*qury_4_upd */ ybx_qury_mst m
@@ -230,12 +229,13 @@ BEGIN
                   where m.queryid = s.queryid 
                     and length ( s.query) is not null )
   where coalesce (  ( trim ( m.query)), '' ) = ''  -- pg funny way to detect empty or null..  
+    and m.log_dt > now() - interval '1 hour'
   ; 
 
   GET DIAGNOSTICS n_qrys_upd := ROW_COUNT;
   retval := retval + n_qrys_upd ;
 
-  RAISE NOTICE 'ybx_get_qury() from upd  : % '     , n_qrys_upd ;
+  -- RAISE NOTICE 'ybx_get_qury() from upd  : % '     , n_qrys_upd ;
 
 
   -- -- -- now do the QURY_LOG data... 
@@ -354,11 +354,11 @@ BEGIN
 
   GET DIAGNOSTICS n_qrys_log := ROW_COUNT;
   retval := retval + n_qrys_log ;
-  RAISE NOTICE 'ybx_get_qury() logged from pg_stat_stmts : % ' , n_qrys_log ; 
+  -- RAISE NOTICE 'ybx_get_qury() logged from pg_stat_stmts : % ' , n_qrys_log ; 
 
   duration_ms := EXTRACT ( MILLISECONDS from ( clock_timestamp() - start_dt ) ) ;
 
-  RAISE NOTICE 'ybx_get_qury() elapsed : % ms'     , duration_ms ;
+  -- RAISE NOTICE 'ybx_get_qury() elapsed : % ms'     , duration_ms ;
 
   cmmnt_txt := 'get_qury, from : ash: '  || n_qrys_ash 
                               || ', act: '  || n_qrys_act 
@@ -407,7 +407,7 @@ DECLARE
   cmmnt_txt      text              := 'comment ' ;
 BEGIN
 
-  RAISE NOTICE 'ybx_get_sess() : starting..' ;
+  -- RAISE NOTICE 'ybx_get_sess() : starting..' ;
 
   -- get from pg_stat_activity., the easiest one bcse usually not too many lines (less than ash)
   -- save log-data for a log-table with time-dependent data
@@ -430,7 +430,7 @@ BEGIN
   GET DIAGNOSTICS n_sess_act := ROW_COUNT;
   retval := retval + n_sess_act ;
 
-  RAISE NOTICE 'ybx_get_sess() from act : % '     , n_sess_act ;
+  -- RAISE NOTICE 'ybx_get_sess() from act : % '     , n_sess_act ;
 
   -- get from ash, many more lines...?
   -- should we  only catch those who are "local" 
@@ -476,7 +476,7 @@ BEGIN
   GET DIAGNOSTICS n_sess_ash := ROW_COUNT;
   retval := retval + n_sess_ash ;
 
-  RAISE NOTICE 'ybx_get_sess() from ash : % ', n_sess_ash ;
+  -- RAISE NOTICE 'ybx_get_sess() from ash : % ', n_sess_ash ;
 
   -- now find the closed sessions..
   update /* get_sess_3_upd */ ybx_sess_mst m
@@ -491,7 +491,7 @@ BEGIN
   GET DIAGNOSTICS n_sess_upd := ROW_COUNT;
   retval := retval + n_sess_upd ;
 
-  RAISE NOTICE 'ybx_get_sess() nr gone : % ', n_sess_upd ;
+  -- RAISE NOTICE 'ybx_get_sess() nr gone : % ', n_sess_upd ;
 
   duration_ms := EXTRACT ( MILLISECONDS from ( clock_timestamp() - start_dt ) ) ;
 
@@ -571,11 +571,11 @@ BEGIN
 
   GET DIAGNOSTICS n_sess_log := ROW_COUNT;
   retval := retval + n_sess_log ;
-  RAISE NOTICE 'ybx_get_sess() sess_log : % ' , n_sess_log ; 
+  -- RAISE NOTICE 'ybx_get_sess() sess_log : % ' , n_sess_log ; 
     
   duration_ms := EXTRACT ( MILLISECONDS from ( clock_timestamp() - start_dt ) ) ;
 
-  RAISE NOTICE 'ybx_get_sess() elapsed : % ms'     , duration_ms ;
+  -- RAISE NOTICE 'ybx_get_sess() elapsed : % ms'     , duration_ms ;
 
   cmmnt_txt := 'get_sess: ash: '     || n_sess_ash
                     || ', act: '     || n_sess_act 
@@ -661,7 +661,7 @@ where not exists (
 GET DIAGNOSTICS n_mst_created := ROW_COUNT;
 retval := retval + n_mst_created ;
 
-RAISE NOTICE 'ybx_get_tblt() mst_created : % tblts' , n_mst_created ; 
+-- RAISE NOTICE 'ybx_get_tblt() mst_created : % tblts' , n_mst_created ; 
 
 -- insert Replicas..this node only
 insert /* get_tblt_2 */ into ybx_tblt_rep (
@@ -679,7 +679,7 @@ where not exists (
 
 GET DIAGNOSTICS    n_rep_created := ROW_COUNT;
 retval := retval + n_rep_created ;
-RAISE NOTICE 'ybx_get_tblt() rep_created : % tblts'  , n_rep_created ; 
+-- RAISE NOTICE 'ybx_get_tblt() rep_created : % tblts'  , n_rep_created ; 
 
 -- detect gone-replicas
 update /* get_tblt_3 */ ybx_tblt_rep r 
@@ -695,7 +695,7 @@ and not exists (                             -- no more local tblt
 
 GET DIAGNOSTICS    n_rep_gone := ROW_COUNT;
 retval := retval + n_rep_gone ;
-RAISE NOTICE 'ybx_get_tblt() rep_gone : % tblts'  , n_rep_gone ; 
+-- RAISE NOTICE 'ybx_get_tblt() rep_gone : % tblts'  , n_rep_gone ; 
 
 -- update the gone_date on mst if tablet no longer present in replicas..
 -- signal gone_date if ... gone
@@ -712,11 +712,11 @@ and not exists (                      -- no more open replicas
 
 GET DIAGNOSTICS    n_mst_gone := ROW_COUNT;
 retval := retval + n_mst_gone ;
-RAISE NOTICE 'ybx_get_tblt() mst_gone : % tblts'  , n_mst_gone ; 
+-- RAISE NOTICE 'ybx_get_tblt() mst_gone : % tblts'  , n_mst_gone ; 
 
 duration_ms := EXTRACT ( MILLISECONDS from ( clock_timestamp() - start_dt ) ) ; 
 
-RAISE NOTICE 'ybx_get_tblt() elapsed  : % ms'     , duration_ms ; 
+-- RAISE NOTICE 'ybx_get_tblt() elapsed  : % ms'     , duration_ms ; 
 
 cmmnt_txt := 'm_created: ' || n_mst_created 
         || ', r_created: ' || n_rep_created 
@@ -823,11 +823,11 @@ where not exists ( select 'x' from ybx_ashy_log b
 GET DIAGNOSTICS n_ashrecs := ROW_COUNT;
 retval := retval + n_ashrecs ;
 
-RAISE NOTICE 'ybx_get_ashy() yb_act_sess_hist : % ' , n_ashrecs ; 
+-- RAISE NOTICE 'ybx_get_ashy() yb_act_sess_hist : % ' , n_ashrecs ; 
 
 duration_ms := EXTRACT ( MILLISECONDS from ( clock_timestamp() - start_dt ) ) ; 
 
-RAISE NOTICE 'ybx_get_ashy() elapsed : % ms'     , duration_ms ; 
+-- RAISE NOTICE 'ybx_get_ashy() elapsed : % ms'     , duration_ms ; 
 
 cmmnt_txt := 'ashy: ' || n_ashrecs || '.'; 
 
@@ -884,10 +884,10 @@ BEGIN
    
   GET DIAGNOSTICS n_evnt_ins := ROW_COUNT;
   retval := retval + n_evnt_ins ;
-  RAISE NOTICE 'ybx_get_evnt() inserted : % ' , n_evnt_ins ; 
+  -- RAISE NOTICE 'ybx_get_evnt() inserted : % ' , n_evnt_ins ; 
 
   duration_ms := EXTRACT ( MILLISECONDS from ( clock_timestamp() - start_dt ) ) ;
-  RAISE NOTICE 'ybx_get_evnst() elapsed : % ms'     , duration_ms ;
+  -- RAISE NOTICE 'ybx_get_evnst() elapsed : % ms'     , duration_ms ;
 
   ev_cmmnt_txt := 'get_evnt: new events found : ' || n_evnt_ins || '.' ;
 

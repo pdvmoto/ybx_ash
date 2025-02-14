@@ -127,7 +127,7 @@ $$ LANGUAGE sql;
  create table ybx_log (
     id          bigint        generated always as identity
   , logged_dt   timestamptz   not null
-  , host        text
+  , log_host    text
   , component   text
   , ela_ms      double precision
   , info_txt   text
@@ -751,6 +751,11 @@ when 6 then '-- background: kQueryIdForLogBackgroundSync'
 -- experimental index, covers the insert-exist stmnt
 create index ybx_ashy_log_i2 on ybx_ashy_log 
 ( root_request_id, sample_time, host, rpc_request_id, wait_event );
+
+-- index for entry via pid, top and rr
+-- this index can remove top_level IF we can always use RR
+-- but in case where we need to "find" RR first, we need sess:pid+top to come first
+create index ybx_ashy_log_ipid on ybx_ashy_log ( pid, top_level_node_id, root_request_id ) ; 
 
 -- drop table ybx_evlst ;  
 

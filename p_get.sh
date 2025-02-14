@@ -14,6 +14,79 @@ OUTFILE2=sess_tree${1}.out
 
 psql -h localhost -p 5433 -U yugabyte -X <<EOF | tee $OUTFILE
 
+
+drop table ybx_rore_mst ; 
+create temporary table ybx_rore_mst (
+  rr_uuid   uuid primary key 
+, sess_id   bigint
+, rr_min_dt timestamptz
+, rr_max_dt timestamptz
+-- , constraint ybx_rore_mst_fk_sess foreign key (sess_id ) references ybx_sess_mst ( id ) 
+); 
+
+drop table ybx_rrqy_lnk ; 
+create temporary table ybx_rrqy_lnk (
+  queryid   bigint
+, rr_uuid   uuid
+, qurr_start_dt timestamp with time zone
+, dur_ms    bigint
+, constraint ybx_rrqy_lnk_pk primary key ( queryid, rr_uuid ) 
+-- fk to rr,
+-- fk to qry
+) ;
+
+
+insert /* rore_01 */ into ybx_rore_mst (
+  sess_id
+, rr_uuid
+, rr_min_dt
+, rr_max_dt
+)
+select /* rore_01 */
+  sm.id
+, al.root_request_id
+, min ( al.sample_time )
+, max ( al.sample_time )
+ from ybx_ashy_log al
+    , ybx_sess_mst sm
+ where  1=1
+   and al.top_level_node_id       = sm.tsrv_uuid
+   and al.pid                     = sm.pid  -- need time-frame criterium as well...!!
+   and sm.pid                = $1
+   and al.root_request_id::text   not like '0000%'
+   and  al.sample_time            > now() - interval '1 hour'
+   and sm.usesysid is not null     -- no ghosts, resolve this by detecting PID from ASH
+   and not exists ( select 'x'
+            from ybx_rore_mst rm
+            where rm.sess_id = sm.id
+              and rm.rr_uuid = al.root_request_id
+            -- need to build MERGE to UPDATE rrs with higher max_sample_time
+           )
+group by 1, 2
+;
+
+-- insert the relevant RRs, just the pid
+insert /* rrqy 01 */ into ybx_rrqy_lnk ( rr_uuid, queryid, qurr_start_dt, dur_ms )
+select /* distinct  */
+  rm.rr_uuid 
+, al.query_id
+, min ( al.sample_time )
+, extract ( epoch from ( max ( al.sample_time ) - min ( al.sample_time ) ) ) * 1000 as dur_ms
+from ybx_rore_mst rm -- no need to select pid, rore only contains relevant records
+   , ybx_ashy_log al
+where 1=1
+  and rm.rr_uuid = al.root_request_id       -- assume rr is unique
+  and not exists ( select 'x'
+          from ybx_rrqy_lnk ql
+          where ql.rr_uuid   = rm.rr_uuid
+            and ql.queryid = al.query_id
+            -- need to add MERGE to UPDATE queries with higher max-sample
+          )
+group by 1, 2
+;
+
+
+
 \set ECHO none
 \timing off
 
@@ -49,8 +122,8 @@ select
 , rm.rr_uuid
 , to_char ( rm.rr_min_dt , 'HH24:MI:SS' ) rr_start
 , trunc ( extract ( epoch from ( rm.rr_min_dt - sm.backend_start  ) ), 3)  as secs_in
-, trunc ( dur_ms, 3 ) as rr_duration_ms
-from ybx_rrqs_mvw rm
+, trunc ( extract ( epoch from ( rm.rr_max_dt - rm.rr_min_dt      ) ), 3)  as rr_duration_s
+from ybx_rore_mst rm
    , ybx_sess_mst sm
 where rm.sess_id = sm.id
   and sm.pid = $1 
@@ -69,11 +142,11 @@ select
       , count (*)                                               as nr_of_rr
       , to_char ( Min ( ql.qurr_start_dt ), 'HH24:MI:SS.MS' )   as first_occ
       , sum ( ql.dur_ms )                                       as total_ms
-from ybx_rrqs_mvw rm
-   , ybx_qurr_lnk ql 
+from ybx_rore_mst rm
+   , ybx_rrqy_lnk ql 
    , ybx_qury_mst qm
    , ybx_sess_mst sm
-where rm.id       = ql.rr_id
+where rm.rr_uuid  = ql.rr_uuid
   and qm.queryid  = ql.queryid
   and sm.id       = rm.sess_id
   and sm.pid = $1 
@@ -85,20 +158,21 @@ order by 4
 \! echo -- -- -- Queries per  RR -- -- -- 
 \! echo .
 
-select  case when ( rm.id = lag(rm.id) over ( order by ql.qurr_start_dt ) ) 
-              then null else rm.id end                      as rr_id
-      , to_char ( ql.qurr_start_dt , 'HH24:MI:SS.MS' )      as qury_started
+select  case when ( rm.rr_uuid = lag(rm.rr_uuid) over ( order by ql.qurr_start_dt ) ) 
+              then null else substr ( rm.rr_uuid::text, 1, 4 ) end    as rr_uuid
+      , to_char ( ql.qurr_start_dt , 'HH24:MI:SS.MS' )                as qury_started
       , qm.queryid
       , trunc ( extract(epoch from 
                 (ql.qurr_start_dt - lead(ql.qurr_start_dt) over (order by ql.qurr_start_dt))) * -1000
               )                                             as lag_ms
       , ql.dur_ms as  dur_ms
       , substr ( replace ( qm.query, chr(10), ' '), 1, 60)  as Query
-from ybx_rrqs_mvw rm
-   , ybx_qurr_lnk ql 
+from ybx_rore_mst rm
+   , ybx_rrqy_lnk ql 
    , ybx_qury_mst qm
    , ybx_sess_mst sm
-where rm.id       = ql.rr_id
+where 1=1
+  and rm.id       = ql.rr_id
   and qm.queryid  = ql.queryid
   and sm.id       = rm.sess_id
   and sm.pid = $1 
@@ -118,10 +192,11 @@ select
 , al.host
 , al.wait_event
 , al.query_id
-from ybx_rrqs_mvw rm
+from ybx_rore_mst rm
    , ybx_ashy_log al 
    , ybx_sess_mst sm
-where rm.rr_uuid  = al.root_request_id
+where 1=1
+  and rm.rr_uuid  = al.root_request_id
   and rm.sess_id  = sm.id
   and sm.pid = $1
 order by al.sample_time
@@ -133,12 +208,10 @@ order by al.sample_time
 \! echo .
 
 
-select  
--- case when ( rm.id = lag(rm.id) over ( order by al.sample_time ) ) 
---      then null else rm.id end             as rr_id
+select 
   case when ( rm.rr_uuid = lag(rm.rr_uuid) over ( order by al.sample_time ) ) 
        then null else substr ( rm.rr_uuid::text, 1, 8 ) end  as rr_uuid
- -- rm.rr_uuid 
+-- rm.rr_uuid 
 , to_char ( al.sample_time, 'HH24:MI:SS.MS' )      as time_ms
 , case al.rpc_request_id when 0 then al.host else ' L '|| al.host end 
 || '     ' ||        substr ( wait_event, 1, 15 )  as event
@@ -154,11 +227,11 @@ from      ybx_ashy_log al
 left join ybx_tblt_mst tbm on substr ( replace ( tbm.tblt_uuid::text, '-', '' ) , 1, 15 ) = al.wait_event_aux
      join ybx_rrqs_mst rm  on rm.rr_uuid = al.root_request_id 
      join ybx_qury_mst qm  on qm.queryid = al.query_id 
-where 1=1
+where 1=0 -- switch off to save time
 and 1=1
-and rm.id in ( 
-  select rr.id 
-    from ybx_rrqs_mst rr
+and rm.rr_uuid in ( 
+  select rr.rr_uuid 
+    from ybx_rore_mst rr
        , ybx_sess_mst sm
    where rr.sess_id = sm.id 
      and sm.pid = $1
@@ -167,21 +240,27 @@ order by al.sample_time ;
 
 select ' p_get.sh: end of first part, wait for 2nd... ' msg ; 
 
--- generate tree-shaped output
+-- generate tree-shaped output, using temp tables and just the records from 1 PID
 
 truncate table ybx_tmp_out; -- tmp-table, blunt approach..
 
-select ybx_evnt_ppid ( $1 ) ;
+select ybx_evnt_ppid2 ( $1 ) ;
 
 -- show, and spool to file
 select output from ybx_tmp_out where ltrim ( output)  != ''  order by id ;
+
+select ybx_get_host()         as your_host
+, pg_backend_pid ()           as your_pid
+, substr ( version(), 1, 30 ) as your_version ;
 
 \q
 
 EOF 
 
+psql 
 
 echo .
-echo Results in $OUTFILE and $OUTFILE2 
+echo Results in $OUTFILE 
 echo .
+
 
