@@ -922,6 +922,7 @@ $$ LANGUAGE sql;
 
 -- use separate file to develop functions..faster
 \i mk_yblog_f.sql
+\i mk_yblog_out.sql
 
 \! echo .
 \! echo -- -- -- -- ASH-logging objects Created -- -- -- 

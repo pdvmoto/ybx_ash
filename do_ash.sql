@@ -11,19 +11,21 @@ beware: needs unames.sh
 -- set start 
 SELECT extract(epoch FROM now())::numeric AS start_ash_dt \gset
 
-select ybx_get_datb () ;
+SELECT ''''||ybx_get_host()||''''         AS hostnm \gset
+
+select :hostnm hostname, ybx_get_datb () ;
 
 -- select ybx_get_tablog () ;
 
-select ybx_get_tblt () ;
+select :hostnm hostname, ybx_get_tblt () ;
 
-select ybx_get_sess () ;
+select :hostnm hostname, ybx_get_sess () ;
 
-select ybx_get_qury () ;  
+select :hostnm hostname, ybx_get_qury () ;  
 
-select ybx_get_ashy () ;
+select :hostnm hostname, ybx_get_ashy () ;
 
-select ybx_get_evnt () ; 
+select :hostnm hostname, ybx_get_evnt () ; 
 
 -- old but keep
 

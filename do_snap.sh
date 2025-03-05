@@ -247,7 +247,9 @@ time ysqlsh -h $HOSTNAME -X <<EOF
     ) 
   insert into ybx_log ( logged_dt, host, component, ela_ms, info_txt )
                  select logged_dt, host, component, ela_ms, info_txt 
-                   from log ; 
+                   from log 
+  returning host, to_char ( logged_dt, 'HH24:MI:SS' ), ela_ms, info_txt
+  ; 
 
 EOF
 
