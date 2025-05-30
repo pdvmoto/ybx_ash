@@ -290,7 +290,12 @@ create table ybx_tsrv_mst (
 , status      text
 , rd_psec     real
 , wr_psec     real
-, uptime      bigint
+, uptime_s    bigint
+, sst_total_mb  bigint
+, sst_uncomp_mb bigint
+, sst_nrfiles   bigint
+, mem_mb        bigint
+, broadcast     text
 -- add fields for server_metrics
 , mem_free_mb            bigint
 , mem_total_mb           bigint
